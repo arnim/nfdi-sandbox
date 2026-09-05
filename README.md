@@ -8,6 +8,45 @@ ingress.
 This is a working prototype, not a published npm package or production-hardened
 service.
 
+[![CI](https://github.com/arnim/nfdi-sandbox/actions/workflows/ci.yml/badge.svg)](https://github.com/arnim/nfdi-sandbox/actions/workflows/ci.yml)
+[![Full E2E](https://github.com/arnim/nfdi-sandbox/actions/workflows/e2e.yml/badge.svg)](https://github.com/arnim/nfdi-sandbox/actions/workflows/e2e.yml)
+
+## Tests and GitHub Actions
+
+Like `nbverify`, fast checks and a local smoke test run on pushes to `main`,
+pull requests, and manual dispatch. Fast checks cover Node 20, 22, and 24. The
+smoke job builds our Dockerfile and exercises the Jupyter APIs and real OpenSSH:
+authentication, host-key verification, PTY allocation, and binary SCP/SFTP.
+
+The Full E2E workflow runs daily at 03:47 UTC or on manual dispatch from `main`.
+It tests Jupyter4NFDI custom-image and Repo2Docker launches sequentially, including
+exec, files, stop, and destroy. The custom-image test also checks SSH. Live SSH
+uses the public Pangeo test image; CI separately builds and tests our Dockerfile.
+The plain Repo2Docker fixture does not include SSH, so that canary tests only
+Jupyter APIs and lifecycle. Missing credentials fail explicitly.
+
+```bash
+npm ci
+npm run test:fast
+docker build -f image/Dockerfile -t nfdi-sandbox:test .
+npm run test:e2e:local
+NFDI_E2E_SOURCE=image npm run test:e2e:jupyter4nfdi
+NFDI_E2E_SOURCE=repo2docker npm run test:e2e:jupyter4nfdi
+npm run test:e2e:cleanup
+```
+
+Live tests read the repository Actions secret `JUPYTER4NFDI_TOKEN`, only on the
+nightly/manual workflow. PR checks do not receive it. Tests generate temporary
+SSH identities and pin the host key obtained over authenticated HTTPS. Pending
+session metadata is saved immediately so cleanup can destroy a server even if
+provisioning or testing fails. Both the runner's `finally` block and a separate
+`always()` workflow step perform cleanup and verify remote deletion. The runner
+state is in ignored `work/e2e/` locally, or the GitHub runner's temporary directory.
+Do not run concurrent local tests against the same state directory; override
+`NFDI_E2E_STATE_DIR` to isolate runs. A lost runner or forced job termination can
+still prevent cleanup; remove any surviving `nfdi-e2e-*` configuration in the
+Jupyter4NFDI UI. State files and SSH keys are never uploaded as workflow artifacts.
+
 ## What works
 
 - Create from a Jupyter-compatible custom image.

@@ -1,0 +1,46 @@
+name: Full E2E
+
+on:
+  schedule:
+    - cron: '47 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: full-e2e
+  cancel-in-progress: false
+
+jobs:
+  jupyter4nfdi:
+    name: Jupyter4NFDI (${{ matrix.source }})
+    if: github.repository == 'arnim/nfdi-sandbox' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        source: [image, repo2docker]
+    env:
+      NFDI_E2E_STATE_DIR: ${{ runner.temp }}/nfdi-e2e
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Test live provisioning, execution, files, and lifecycle
+        timeout-minutes: 38
+        env:
+          JUPYTER4NFDI_TOKEN: ${{ secrets.JUPYTER4NFDI_TOKEN }}
+          NFDI_E2E_SOURCE: ${{ matrix.source }}
+        run: npm run test:e2e:jupyter4nfdi
+      - name: Destroy remaining test servers
+        if: always()
+        timeout-minutes: 5
+        env:
+          JUPYTER4NFDI_TOKEN: ${{ secrets.JUPYTER4NFDI_TOKEN }}
+        run: npm run test:e2e:cleanup
