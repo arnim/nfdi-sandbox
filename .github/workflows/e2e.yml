@@ -24,7 +24,7 @@ jobs:
       matrix:
         source: [image, repo2docker]
     env:
-      NFDI_E2E_STATE_DIR: ${{ runner.temp }}/nfdi-e2e
+      NFDI_E2E_STATE_DIR: ${{ github.workspace }}/work/e2e
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

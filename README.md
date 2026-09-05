@@ -41,7 +41,7 @@ SSH identities and pin the host key obtained over authenticated HTTPS. Pending
 session metadata is saved immediately so cleanup can destroy a server even if
 provisioning or testing fails. Both the runner's `finally` block and a separate
 `always()` workflow step perform cleanup and verify remote deletion. The runner
-state is in ignored `work/e2e/` locally, or the GitHub runner's temporary directory.
+state is in ignored `work/e2e/` locally and in the disposable GitHub checkout.
 Do not run concurrent local tests against the same state directory; override
 `NFDI_E2E_STATE_DIR` to isolate runs. A lost runner or forced job termination can
 still prevent cleanup; remove any surviving `nfdi-e2e-*` configuration in the
