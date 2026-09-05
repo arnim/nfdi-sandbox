@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { SandboxError } from './errors.js';
 import { Sandbox } from './sandbox.js';
 
@@ -60,14 +61,48 @@ export class Jupyter4NFDIClient {
     return response.json();
   }
 
-  async stop(session, { remove = false } = {}) {
-    const response = await this.request(session.delete_url, {
-      method: 'DELETE',
-      headers: remove ? { 'Content-Type': 'application/json' } : undefined,
-      body: remove ? JSON.stringify({ remove: true }) : undefined,
-    });
-    if (response.ok || response.status === 404) return;
-    throw await responseError(response, remove ? 'DESTROY_FAILED' : 'STOP_FAILED', remove ? 'destroy server' : 'stop server');
+  async stop(session, { remove = false, timeoutMs = 120_000, pollMs = 1000 } = {}) {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || !Number.isFinite(pollMs) || pollMs <= 0) {
+      throw new SandboxError('INVALID_ARGUMENT', 'timeoutMs must be a positive integer and pollMs must be positive');
+    }
+    const { userUrl, serverName } = lifecycleTarget(session.delete_url);
+    const signal = AbortSignal.timeout(timeoutMs);
+    const action = remove ? 'destroy server' : 'stop server';
+    try {
+      const response = await this.request(session.delete_url, {
+        method: 'DELETE',
+        headers: remove ? { 'Content-Type': 'application/json' } : undefined,
+        body: remove ? JSON.stringify({ remove: true }) : undefined,
+        signal,
+      });
+      if (!response.ok && response.status !== 404) {
+        throw await responseError(response, remove ? 'DESTROY_FAILED' : 'STOP_FAILED', action);
+      }
+      // Even 204/404 is checked against the authoritative model. The custom
+      // start-status endpoint may keep reporting "stopped" after removal.
+      // Do not repeatedly DELETE an in-flight stop: that can schedule duplicate
+      // removal callbacks in the Hub. A failed operation can be retried safely
+      // using the retained session record.
+      while (true) {
+        signal.throwIfAborted();
+        const modelResponse = await this.request(userUrl, { signal });
+        if (!modelResponse.ok) throw await responseError(modelResponse, 'STATUS_FAILED', 'verify server lifecycle');
+        const model = await modelResponse.json();
+        signal.throwIfAborted();
+        if (!model?.servers || typeof model.servers !== 'object' || Array.isArray(model.servers)) {
+          throw new SandboxError('INVALID_RESPONSE', 'Hub user model omitted its server configuration map');
+        }
+        if (!Object.hasOwn(model.servers, serverName)) return;
+        const server = model.servers[serverName];
+        if (!remove && server?.ready === false && server.pending === null) return;
+        await sleep(pollMs, undefined, { signal });
+      }
+    } catch (error) {
+      if (signal.aborted) {
+        throw new SandboxError(remove ? 'DESTROY_TIMEOUT' : 'STOP_TIMEOUT', `could not confirm ${action} within ${timeoutMs}ms; retain the session and retry`);
+      }
+      throw error;
+    }
   }
 
   async request(url, options = {}) {
@@ -108,6 +143,19 @@ function normalizeRepo(repo, repoType) {
   const match = repo.match(/^(?:https?:\/\/github\.com\/|git@github\.com:)?([^/]+\/[^/#]+?)(?:\.git)?(?:#.*)?$/);
   if (!match) throw new SandboxError('INVALID_ARGUMENT', `not a GitHub repository: ${repo}`);
   return match[1].replace(/\.git$/, '');
+}
+
+function lifecycleTarget(deleteUrl) {
+  let url;
+  try { url = new URL(deleteUrl); } catch {
+    throw new SandboxError('INVALID_RESPONSE', 'expected an absolute named-server lifecycle URL');
+  }
+  const match = url.pathname.match(/^(.*\/users\/[^/]+)\/servers\/([^/]+)\/?$/);
+  if (!match) throw new SandboxError('INVALID_RESPONSE', 'expected a named-server lifecycle URL');
+  url.pathname = match[1];
+  url.search = '?include_stopped_servers=1';
+  url.hash = '';
+  return { userUrl: url.toString(), serverName: decodeURIComponent(match[2]) };
 }
 
 function absoluteUrl(base, value) {

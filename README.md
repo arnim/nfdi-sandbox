@@ -17,6 +17,8 @@ Like `nbverify`, fast checks and a local smoke test run on pushes to `main`,
 pull requests, and manual dispatch. Fast checks cover Node 20, 22, and 24. The
 smoke job builds our Dockerfile and exercises the Jupyter APIs and real OpenSSH:
 authentication, host-key verification, PTY allocation, and binary SCP/SFTP.
+The fast suite also exercises the deletion helper on a local POSIX filesystem
+(requires `python3`) and tests lifecycle failures through the public CLI.
 
 The Full E2E workflow runs daily at 03:47 UTC or on manual dispatch from `main`.
 It tests Jupyter4NFDI custom-image and Repo2Docker launches sequentially, including
@@ -56,8 +58,9 @@ Jupyter4NFDI UI. State files and SSH keys are never uploaded as workflow artifac
 - Poll status and retain the server URL and lifecycle URLs.
 - Execute shell commands through the authenticated Jupyter Terminals and
   Contents APIs, with separate stdout/stderr, exit status, and a hard timeout.
-- Upload, download, list, create, and recursively delete files through the
-  Jupyter Contents API. Binary files use base64 and are byte preserving.
+- Upload, download, list, and create files through the Jupyter Contents API.
+  Binary files use base64 and are byte preserving. Recursive deletion uses a
+  no-follow filesystem helper over the authenticated Terminals API.
 - Stop compute while retaining the Jupyter4NFDI configuration.
 - Destroy compute and remove the configuration with `{"remove": true}`.
 - Use OpenSSH, SFTP, and SCP through an authenticated WebSocket without exposing
@@ -109,9 +112,31 @@ nfdi-sandbox stop 8f4c6a21
 nfdi-sandbox destroy 8f4c6a21
 ```
 
-`stop` retains the remote server configuration; `destroy` removes it. A stopped
-sandbox is not currently restartable through this minimal client—create a new
-sandbox or use the Jupyter4NFDI UI.
+`stop` retains the remote server configuration; `destroy` removes it. Both wait
+for confirmation from the Hub user model, including stopped configurations, not
+just an HTTP 202 acceptance or the cached start-status endpoint. The token needs
+permission to read that user/server model as well as to stop/delete the server.
+The default verification deadline is 120 seconds; override it with
+`--timeout <seconds>`. A failure or timeout keeps the local lifecycle URLs and the
+`stopping`/`destroying` record: retry the same command with the same ID. The CLI
+removes metadata only after the Hub confirms the configuration is absent.
+
+A stopped sandbox is not currently restartable through this minimal client—create
+a new sandbox or use the Jupyter4NFDI UI.
+
+### Safe recursive deletion
+
+`nfdi-sandbox files rm <id> <relative-path>` and `sandbox.files.remove(path)`
+**permanently** remove the requested tree, including hidden files. Directory
+symlinks are unlinked, never traversed; symlink ancestors are refused. Root,
+absolute, empty, `.` and `..` path components are rejected.
+
+Deletion requires enabled Jupyter terminals, remote `python3` with POSIX
+no-follow/descriptor-relative filesystem support, and a writable filesystem-backed
+Contents root. A temporary proof file verifies that `JUPYTER_SERVER_ROOT` matches
+the Contents root before anything is deleted. Unsupported or mismatched roots fail
+closed; there is no fallback to walking Contents directory listings, which cannot
+distinguish symlinks from directories. Deletion does not use Jupyter's trash.
 
 ## SSH
 
@@ -199,6 +224,9 @@ await sandbox.destroy();
 Use `{ repo: 'OWNER/REPO', ref: '<commit>' }` instead of `image` for
 Repo2Docker. `create()` accepts `onUpdate(session)` so callers can persist the
 pending lifecycle URLs immediately and display status changes.
+`attach(session, { onUpdate })` can persist subsequent lifecycle transitions too. `stop()` and
+`destroy()` accept `{ timeoutMs: 120_000, pollMs: 1000 }`; persist the session until
+`destroy()` resolves successfully, and keep it for retry if verification fails.
 
 ## Security and operational limits
 

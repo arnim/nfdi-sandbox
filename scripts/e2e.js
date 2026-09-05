@@ -15,7 +15,10 @@ const stateDir = path.resolve(process.env.NFDI_E2E_STATE_DIR ?? path.join(root, 
 const store = new SessionStore(path.join(stateDir, 'sessions'));
 const containerFile = path.join(stateDir, 'container.json');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const boundedFetch = (url, options) => fetch(url, { ...options, signal: AbortSignal.timeout(30_000) });
+const boundedFetch = (url, options) => fetch(url, {
+  ...options,
+  signal: options?.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
+});
 const clientFor = (token) => new Jupyter4NFDIClient({ token, fetchImpl: boundedFetch });
 
 async function command(file, args, options = {}) {
@@ -44,23 +47,9 @@ async function cleanup() {
       if (!session.e2e_owned) throw new Error('Refusing to delete a session not created by this runner');
       if (session.delete_url) {
         const client = clientFor(process.env.JUPYTER4NFDI_TOKEN);
-        // Retry accepted asynchronous deletions and verify the configuration is gone.
-        await until(async () => {
-          await client.stop(session, { remove: true });
-          // The custom /start status endpoint can keep returning "stopped"
-          // after removal. Check the authoritative Hub user model, including
-          // stopped configurations, instead of demanding a status-route 404.
-          const target = new URL(session.delete_url);
-          const match = target.pathname.match(/^(.*\/users\/[^/]+)\/servers\/([^/]+)$/);
-          assert.ok(match, 'Expected a named-server lifecycle URL');
-          target.pathname = match[1];
-          target.search = '?include_stopped_servers=1';
-          const response = await client.request(target.toString());
-          assert.equal(response.status, 200, 'Could not verify Hub server removal');
-          const model = await response.json();
-          assert.ok(model.servers && typeof model.servers === 'object');
-          return !Object.hasOwn(model.servers, decodeURIComponent(match[2]));
-        }, 120_000, 'remote configuration deletion');
+        // Exercise the product's confirmation path, not a safer test-only one.
+        // Keep the record if deletion cannot be verified against the Hub model.
+        await client.stop(session, { remove: true, timeoutMs: 120_000 });
       }
       await store.remove(id);
       console.log(`Cleaned test session ${id}`);
@@ -102,13 +91,24 @@ async function exercise(sandbox, { ssh = false, token }) {
     await sandbox.files.write(`${remoteDir}/nested/binary.dat`, data);
     assert.deepEqual(await sandbox.files.read(`${remoteDir}/nested/binary.dat`), data);
     assert.ok((await sandbox.files.list(`${remoteDir}/nested`)).some((item) => item.name === 'binary.dat'));
+    const links = await sandbox.exec([
+      `mkdir -p ${remoteDir}/delete-tree/.hidden`,
+      `printf hidden > ${remoteDir}/delete-tree/.hidden/file`,
+      `ln -s ../nested ${remoteDir}/delete-tree/link`,
+      `ln -s . ${remoteDir}/delete-tree/cycle`,
+      `ln -s missing ${remoteDir}/delete-tree/dangling`,
+    ].join(' && '));
+    assert.equal(links.exitCode, 0);
+    await sandbox.files.remove(`${remoteDir}/delete-tree`);
+    assert.equal(await sandbox.jupyter().get(`${remoteDir}/delete-tree`), null);
+    assert.deepEqual(await sandbox.files.read(`${remoteDir}/nested/binary.dat`), data, 'Deletion must not follow symlink targets');
     if (ssh) await exerciseSsh(sandbox, token, remoteDir, data);
   } finally {
     await sandbox.files.remove(remoteDir);
   }
   assert.equal(await sandbox.jupyter().get(remoteDir), null);
   assert.deepEqual(await sandbox.files.list('_nfdi_sandbox/jobs'), []);
-  console.log('PASS files: binary round trip, listing, recursive deletion, and job cleanup');
+  console.log('PASS files: binary round trip, listing, symlink-safe recursive deletion, hidden entries, and job cleanup');
 }
 
 async function rejectUnauthenticated(serverUrl) {
@@ -224,7 +224,7 @@ async function remote() {
   await sandbox.stop();
   await until(async () => (await sandbox.status()).status === 'stopped', 120_000, 'server stop');
   console.log(`PASS ${source}: create, status, stop`);
-  // Final cleanup issues remove:true and verifies absence from the Hub model.
+  // Final cleanup uses the client's verified remove:true lifecycle operation.
 }
 
 const mode = process.argv[2];

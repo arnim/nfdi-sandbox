@@ -63,14 +63,18 @@ export class Sandbox {
     throw new SandboxError('PROVISIONING_TIMEOUT', `server did not start within ${timeoutMs}ms`);
   }
 
-  async stop() {
-    await this.client.stop(this.session, { remove: false });
+  async stop(options = {}) {
+    this.session.last_status = 'stopping';
+    await this.notifyUpdate();
+    await this.client.stop(this.session, { ...options, remove: false });
     this.session.last_status = 'stopped';
     await this.notifyUpdate();
   }
 
-  async destroy() {
-    await this.client.stop(this.session, { remove: true });
+  async destroy(options = {}) {
+    this.session.last_status = 'destroying';
+    await this.notifyUpdate();
+    await this.client.stop(this.session, { ...options, remove: true });
     this.session.last_status = 'destroyed';
     await this.notifyUpdate();
   }

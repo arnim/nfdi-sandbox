@@ -64,6 +64,7 @@ test('stop and destroy have different API semantics', async () => {
   const client = new Jupyter4NFDIClient({
     token: 'secret',
     fetchImpl: async (url, options = {}) => {
+      if (options.method !== 'DELETE') return Response.json({ servers: {} });
       calls.push({ url, options });
       return new Response(null, { status: 204 });
     },
@@ -72,7 +73,7 @@ test('stop and destroy have different API semantics', async () => {
     id: 'abc',
     hub_url: 'https://hub.example',
     status_url: 'https://hub.example/status',
-    delete_url: 'https://hub.example/delete',
+    delete_url: 'https://hub.example/hub/api/users/alice/servers/agent',
   });
   await sandbox.stop();
   await sandbox.destroy();

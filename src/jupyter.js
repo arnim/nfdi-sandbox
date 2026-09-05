@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import { SandboxError } from './errors.js';
+import { removeTree, validateRemovalPath } from './remove.js';
 
 export class JupyterClient {
   constructor({ serverUrl, token, fetchImpl = globalThis.fetch, WebSocketImpl = WebSocket }) {
@@ -96,15 +97,8 @@ export class JupyterClient {
   }
 
   async remove(remotePath, { recursive = true } = {}) {
-    if (recursive) {
-      const model = await this.get(remotePath);
-      if (!model) return;
-      if (model.type === 'directory') {
-        for (const child of model.content ?? []) {
-          await this.remove(child.path, { recursive: true });
-        }
-      }
-    }
+    validateRemovalPath(remotePath);
+    if (recursive) return removeTree(this, remotePath);
     const response = await this.request(`api/contents/${encodeRemotePath(remotePath)}`, { method: 'DELETE' });
     if (!response.ok && response.status !== 404) throw await jupyterError(response, 'delete', remotePath);
   }
@@ -119,14 +113,18 @@ export class JupyterClient {
     await this.request(`api/terminals/${encodeURIComponent(name)}`, { method: 'DELETE' }).catch(() => {});
   }
 
-  async runTerminalCommand(name, command) {
+  async runTerminalCommand(name, command, { onMessage } = {}) {
     const url = this.apiUrl(`terminals/websocket/${encodeURIComponent(name)}`).replace(/^http/, 'ws');
     const ws = new this.WebSocketImpl(url, {
       headers: { Authorization: `token ${this.token}` },
       followRedirects: true,
     });
+    if (onMessage) ws.on('message', onMessage);
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new SandboxError('SERVER_UNREACHABLE', 'terminal WebSocket timed out')), 30_000);
+      const timer = setTimeout(() => {
+        reject(new SandboxError('SERVER_UNREACHABLE', 'terminal WebSocket timed out'));
+        ws.terminate();
+      }, 30_000);
       ws.once('open', () => { clearTimeout(timer); resolve(); });
       ws.once('error', (error) => { clearTimeout(timer); reject(new SandboxError('SERVER_UNREACHABLE', error.message)); });
     });

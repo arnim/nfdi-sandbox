@@ -73,6 +73,28 @@ No public TCP port was opened. Jupyter Server logs showed the raw socket proxy
 connecting to a random loopback port and OpenSSH accepting the Ed25519 key for
 `jovyan`.
 
+## Post-review safety regressions (local validation)
+
+The high-priority review fixes have separate local validation; the live record
+above predates them. No new live resources were provisioned for these checks.
+
+- The 31-test fast suite passed on Node 20, 22, and 24. Deletion tests execute the
+  actual Python helper against temporary filesystem trees, including links to
+  sibling/outside directories, cycles, dangling links, hidden files, symlink
+  ancestors, a directory-to-symlink replacement race, and mismatched roots.
+- A local Jupyter Server 2.21.0 with permanent Contents deletion enabled verified
+  the real terminal transport, safe tree deletion, hidden entries, and exec job
+  cleanup. Large terminal pastes were found unreliable; deletion therefore
+  uploads its task and sends only a short, encoded bootstrap. Hash verification
+  proves the Contents/terminal root match before execution and deletion.
+- Local HTTP/CLI tests verify that HTTP 202 acceptance is not completion, that
+  stopped configurations remain tracked, and that timeouts, malformed models,
+  authorization failures, and stalled verification responses retain metadata.
+  Retrying with the same record succeeds once the Hub model confirms absence.
+- The E2E runner now uses the client's lifecycle confirmation implementation and
+  includes a symlink/hidden-file deletion regression. It no longer implements a
+  separate, safer deletion-verification path only inside the test helper.
+
 ## What needs platform work
 
 Nothing on the Jupyter4NFDI side is required when users opt into an SSH-capable

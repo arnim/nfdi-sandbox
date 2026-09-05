@@ -137,9 +137,10 @@ files.command('rm')
 program.command('stop')
   .description('stop compute but retain the Jupyter4NFDI server configuration')
   .argument('<id>')
-  .action(async (id) => {
+  .option('--timeout <seconds>', 'maximum wait for confirmed stop', parsePositiveNumber, 120)
+  .action(async (id, options) => {
     const { sandbox, store } = await loadSandbox(id);
-    await sandbox.stop();
+    await sandbox.stop({ timeoutMs: options.timeout * 1000 });
     await store.save(sandbox.session);
     console.log(`Stopped ${id}.`);
   });
@@ -147,9 +148,10 @@ program.command('stop')
 program.command('destroy')
   .description('stop compute and remove the Jupyter4NFDI server configuration')
   .argument('<id>')
-  .action(async (id) => {
+  .option('--timeout <seconds>', 'maximum wait for verified configuration removal', parsePositiveNumber, 120)
+  .action(async (id, options) => {
     const { sandbox, store } = await loadSandbox(id);
-    await sandbox.destroy();
+    await sandbox.destroy({ timeoutMs: options.timeout * 1000 });
     await store.remove(id);
     console.log(`Destroyed ${id} and removed its local metadata.`);
   });
@@ -229,7 +231,7 @@ async function loadSandbox(id) {
   const store = makeStore();
   const session = await store.load(id);
   const client = new Jupyter4NFDIClient({ token: getToken(), hubUrl: session.hub_url ?? program.opts().hubUrl });
-  return { sandbox: client.attach(session), store };
+  return { sandbox: client.attach(session, { onUpdate: (state) => store.save(state) }), store };
 }
 
 function parsePositiveNumber(value) {
