@@ -40,7 +40,9 @@ nightly/manual workflow. PR checks do not receive it. Tests generate temporary
 SSH identities and pin the host key obtained over authenticated HTTPS. Pending
 session metadata is saved immediately so cleanup can destroy a server even if
 provisioning or testing fails. Both the runner's `finally` block and a separate
-`always()` workflow step perform cleanup and verify remote deletion. The runner
+`always()` workflow step perform cleanup and verify remote deletion against the
+Hub user model, including stopped configurations. The custom start-status
+endpoint can still report `stopped` after removal and is not used as proof of deletion. The runner
 state is in ignored `work/e2e/` locally and in the disposable GitHub checkout.
 Do not run concurrent local tests against the same state directory; override
 `NFDI_E2E_STATE_DIR` to isolate runs. A lost runner or forced job termination can

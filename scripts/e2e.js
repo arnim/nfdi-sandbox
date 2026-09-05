@@ -47,7 +47,19 @@ async function cleanup() {
         // Retry accepted asynchronous deletions and verify the configuration is gone.
         await until(async () => {
           await client.stop(session, { remove: true });
-          return (await client.getStatus(session)).status === 'destroyed';
+          // The custom /start status endpoint can keep returning "stopped"
+          // after removal. Check the authoritative Hub user model, including
+          // stopped configurations, instead of demanding a status-route 404.
+          const target = new URL(session.delete_url);
+          const match = target.pathname.match(/^(.*\/users\/[^/]+)\/servers\/([^/]+)$/);
+          assert.ok(match, 'Expected a named-server lifecycle URL');
+          target.pathname = match[1];
+          target.search = '?include_stopped_servers=1';
+          const response = await client.request(target.toString());
+          assert.equal(response.status, 200, 'Could not verify Hub server removal');
+          const model = await response.json();
+          assert.ok(model.servers && typeof model.servers === 'object');
+          return !Object.hasOwn(model.servers, decodeURIComponent(match[2]));
         }, 120_000, 'remote configuration deletion');
       }
       await store.remove(id);
@@ -212,7 +224,7 @@ async function remote() {
   await sandbox.stop();
   await until(async () => (await sandbox.status()).status === 'stopped', 120_000, 'server stop');
   console.log(`PASS ${source}: create, status, stop`);
-  // Final cleanup issues remove:true and verifies status returns destroyed.
+  // Final cleanup issues remove:true and verifies absence from the Hub model.
 }
 
 const mode = process.argv[2];
