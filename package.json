@@ -1,0 +1,22 @@
+{
+  "name": "nfdi-sandbox",
+  "version": "0.1.0",
+  "description": "Minimal agent sandbox client for Jupyter4NFDI",
+  "license": "BSD-3-Clause",
+  "type": "module",
+  "bin": {
+    "nfdi-sandbox": "src/cli.js"
+  },
+  "exports": "./src/index.js",
+  "scripts": {
+    "test": "node --test",
+    "test:ssh": "node --test test/ssh.integration.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "commander": "^14.0.1",
+    "ws": "^8.18.3"
+  }
+}
