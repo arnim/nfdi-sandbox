@@ -64,10 +64,23 @@ A second disposable launch used the documented Repo2Docker payload with the
 public `binder-examples/requirements` GitHub repository at `HEAD`. It reached
 `running`, executed `pwd; python3 -V` successfully in `/home/jovyan`, completed
 another byte-identical Contents API file round trip, stopped, and was destroyed.
-This live run also reproduced Jupyter4NFDI's short start race: the start response
-was `pending`, the first status poll was transiently `stopped`, and a later poll
-returned `pending`. The client now has an explicit 30-second grace period and a
-regression test for that sequence.
+This live run also showed the start response as `pending`, the first status
+poll as `stopped`, and a later poll as `pending`. At the time this was read as a
+short start race and handled with a 30-second grace period. Live failures on
+2026-09-09/10 (cold Repo2Docker rebuilds after the Hub's Ubuntu 24.04 base-image
+update) showed the real semantics: the start-status endpoint reports `stopped`
+for the entire image build and only `logs` changes; the first poll may still
+carry the previous server's `exit_code`/`logs`; a failed build stays `stopped`
+with a `post_api preparation failed: …` log line rather than becoming `failed`.
+`waitUntilRunning()` now tracks progress through `logs` and treats `stopped` as
+terminal only after `pending`, on the build-failure marker, or after a stall
+(`stallMs`). Regression tests cover these sequences against a fake Hub. Live
+checks on 2026-09-10: a cold Repo2Docker build of `binder-examples/requirements`
+reached `running` after ~70 s of `stopped`; `arnim/repo2docker-build-failure-test`
+failed fast via the marker after 75 s; re-launching an already failed server
+name produced no new build output and was caught by the stall detector. See
+NFDI-Jupyter/services#53 and arnim/nbverify@7e3db3d for the same finding in
+another client.
 
 No public TCP port was opened. Jupyter Server logs showed the raw socket proxy
 connecting to a random loopback port and OpenSSH accepting the Ed25519 key for

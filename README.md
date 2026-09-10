@@ -222,7 +222,13 @@ await sandbox.destroy();
 ```
 
 Use `{ repo: 'OWNER/REPO', ref: '<commit>' }` instead of `image` for
-Repo2Docker. `create()` accepts `onUpdate(session)` so callers can persist the
+Repo2Docker. Note that the Hub reports `stopped` for the whole Repo2Docker
+image build (there is no `building` status); only the status payload's `logs`
+change. `waitUntilRunning()` therefore treats `stopped` as a failure only when
+`pending` was seen before, the last log line carries the Hub's build-failure
+marker, or the logs stall for `stallMs` (default 5 minutes). A cold build can
+take several minutes; `launchTimeoutMs` bounds build and spawn together.
+`create()` accepts `onUpdate(session)` so callers can persist the
 pending lifecycle URLs immediately and display status changes.
 `attach(session, { onUpdate })` can persist subsequent lifecycle transitions too. `stop()` and
 `destroy()` accept `{ timeoutMs: 120_000, pollMs: 1000 }`; persist the session until

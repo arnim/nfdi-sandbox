@@ -42,21 +42,56 @@ export class Sandbox {
     };
   }
 
-  async waitUntilRunning({ timeoutMs = 30 * 60_000, pollMs = 5_000 } = {}) {
+  /**
+   * Poll until the server is running.
+   *
+   * Jupyter4NFDI status semantics (observed on the live Hub, undocumented):
+   * while a Repo2Docker image is being built, the start-status endpoint keeps
+   * answering `status: "stopped"`; only `logs` changes (streaming build
+   * output, capped at ~500 lines). The first poll may still show the previous
+   * server's snapshot (its `exit_code` and `logs`). A failed build never
+   * becomes `failed`: it stays `stopped` with a
+   * `post_api preparation failed: …` log line. Once the image exists the
+   * status moves to `pending` and then `running`. Hence `stopped` is never
+   * terminal on its own; build progress is tracked through `logs`.
+   *
+   * @param {object} [options]
+   * @param {number} [options.timeoutMs] overall build + spawn budget
+   * @param {number} [options.pollMs] status poll interval
+   * @param {number} [options.stallMs] fail when `stopped` and the logs have
+   *   not changed for this long
+   */
+  async waitUntilRunning({ timeoutMs = 30 * 60_000, pollMs = 5_000, stallMs = 5 * 60_000 } = {}) {
     const deadline = Date.now() + timeoutMs;
-    // Jupyter4NFDI can briefly answer "stopped" on the first status poll even
-    // after the start request returned "pending". Only a polled pending state
-    // proves that the Hub has registered the spawn.
     let seenPending = false;
-    const graceUntil = Date.now() + 30_000;
+    let lastSignature = null;
+    let seenProgress = false; // logs changed since the (possibly stale) first poll
+    let lastProgress = Date.now();
     while (Date.now() <= deadline) {
       const state = await this.status();
+      const now = Date.now();
       if (state.status === 'running') return this;
       if (state.status === 'pending') seenPending = true;
-      if (state.status === 'failed' || state.status === 'destroyed' ||
-          (state.status === 'stopped' && (seenPending || Date.now() > graceUntil))) {
-        const tail = Array.isArray(state.logs) ? `\n${state.logs.slice(-10).join('\n')}` : '';
-        throw new SandboxError('PROVISIONING_FAILED', `server entered ${state.status}${state.message ? `: ${state.message}` : ''}${tail}`);
+
+      const logs = Array.isArray(state.logs) ? state.logs.map(String) : [];
+      const signature = `${logs.length}\n${logs.slice(-3).join('')}`;
+      if (signature !== lastSignature) {
+        if (lastSignature !== null) seenProgress = true;
+        lastSignature = signature;
+        lastProgress = now;
+      }
+
+      let reason;
+      if (state.status === 'failed' || state.status === 'destroyed') reason = `server entered ${state.status}`;
+      else if (state.status === 'stopped') {
+        const lastLine = (logs.at(-1) ?? '').trim();
+        if (seenPending) reason = 'server stopped after spawn';
+        else if (seenProgress && BUILD_FAILURE_RE.test(lastLine)) reason = 'image build failed';
+        else if (now - lastProgress >= stallMs) reason = `no build progress for ${Math.round((now - lastProgress) / 1000)}s`;
+      }
+      if (reason) {
+        const tail = logs.length ? `\n${logs.slice(-10).join('\n')}` : '';
+        throw new SandboxError('PROVISIONING_FAILED', `${reason}${state.message ? `: ${state.message}` : ''}${tail}`);
       }
       await sleep(pollMs);
     }
@@ -149,6 +184,9 @@ async function pollJson(jupyter, path, deadline) {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Hub log line that marks a failed Repo2Docker build. */
+const BUILD_FAILURE_RE = /preparation failed|Error during build/i;
 
 const EXEC_RUNNER = String.raw`import base64
 import json

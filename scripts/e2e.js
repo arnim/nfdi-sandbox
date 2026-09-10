@@ -245,6 +245,9 @@ try {
   // publish those in public CI logs or upload the state/key directory as artifacts.
   console.error(`FAIL ${mode}: ${error.code ?? error.name}`);
   if (error instanceof assert.AssertionError) console.error(error.message);
+  // The first line of a provisioning failure is the client's own reason
+  // (e.g. "image build failed"); the Hub log tail below it stays hidden.
+  if (error.code === 'PROVISIONING_FAILED') console.error(String(error.message).split('\n')[0]);
   if (error instanceof AggregateError) console.error('Cleanup failed; rerun the cleanup command with the same state directory.');
   process.exitCode = 1;
 }
